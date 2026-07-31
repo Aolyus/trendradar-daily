@@ -21,7 +21,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-            - name: Fix uploaded package layout
+      - name: Fix uploaded package layout
         run: |
           mkdir -p trendradar
 
