@@ -21,16 +21,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Fix uploaded package layout
+            - name: Fix uploaded package layout
         run: |
-          if [ ! -f trendradar/__main__.py ] && [ -f __main__.py ]; then
-            mkdir -p trendradar
-            for item in __init__.py __main__.py context.py ai commands core crawler notification report storage utils; do
-              if [ -e "$item" ]; then
-                mv "$item" trendradar/
-              fi
-            done
-          fi
+          mkdir -p trendradar
+
+          for item in __init__.py __main__.py context.py ai commands core crawler notification report storage utils; do
+            if [ -e "$item" ] && [ ! -e "trendradar/$item" ]; then
+              mv "$item" trendradar/
+            fi
+          done
+
+          echo "Current trendradar package:"
+          find trendradar -maxdepth 2 -type f | sort | head -80
 
       - name: Set up Python
         uses: actions/setup-python@v5
