@@ -15,24 +15,26 @@ permissions:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
+      - name: Checkout my config repository
         uses: actions/checkout@v4
+        with:
+          path: my-config
 
-      - name: Fix uploaded package layout
+      - name: Checkout TrendRadar source
+        uses: actions/checkout@v4
+        with:
+          repository: SANSAN0/TRENDRADAR
+          ref: master
+          path: TrendRadar
+
+      - name: Copy my config
         run: |
-          mkdir -p trendradar
-
-          for item in __init__.py __main__.py context.py ai commands core crawler notification report storage utils; do
-            if [ -e "$item" ] && [ ! -e "trendradar/$item" ]; then
-              mv "$item" trendradar/
-            fi
-          done
-
-          echo "Current trendradar package:"
-          find trendradar -maxdepth 2 -type f | sort | head -80
+          if [ -d my-config/config ]; then
+            cp -r my-config/config/* TrendRadar/config/
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,9 +45,11 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
+        working-directory: TrendRadar
         run: uv sync --frozen --no-dev
 
       - name: Run TrendRadar
+        working-directory: TrendRadar
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           AI_ANALYSIS_ENABLED: ${{ secrets.AI_ANALYSIS_ENABLED }}
