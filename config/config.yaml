@@ -1,0 +1,79 @@
+app:
+  timezone: "Asia/Shanghai"
+
+platforms:
+  enabled: true
+  api_url: ""
+  sources:
+    - id: "toutiao"
+      name: "今日头条"
+      expected_domain: "toutiao.com"
+    - id: "baidu"
+      name: "百度热搜"
+      expected_domain: "baidu.com"
+    - id: "weibo"
+      name: "微博"
+      expected_domain: "weibo.com"
+    - id: "zhihu"
+      name: "知乎"
+      expected_domain: "zhihu.com"
+    - id: "bilibili-hot-search"
+      name: "B站热搜"
+      expected_domain: "bilibili.com"
+    - id: "wallstreetcn-hot"
+      name: "华尔街见闻"
+      expected_domain: "wallstreetcn.com"
+
+rss:
+  enabled: true
+  freshness_filter:
+    enabled: true
+    max_age_days: 2
+  feeds:
+    - id: "openai-news"
+      name: "OpenAI News"
+      url: "https://openrss.org/openai.com/news/rss.xml"
+
+    - id: "huggingface-blog"
+      name: "Hugging Face Blog"
+      url: "https://huggingface.co/blog/feed.xml"
+
+    - id: "techcrunch-ai"
+      name: "TechCrunch AI"
+      url: "https://techcrunch.com/category/artificial-intelligence/feed/"
+
+    - id: "venturebeat-ai"
+      name: "VentureBeat AI"
+      url: "https://venturebeat.com/category/ai/feed/"
+
+    - id: "the-decoder"
+      name: "The Decoder"
+      url: "https://the-decoder.com/feed/"
+
+    - id: "latent-space"
+      name: "Latent Space"
+      url: "https://www.latent.space/feed"
+
+    - id: "simonwillison"
+      name: "Simon Willison"
+      url: "https://simonwillison.net/atom/everything/"
+
+    - id: "hacker-news"
+      name: "Hacker News"
+      url: "https://hnrss.org/frontpage"
+
+report:
+  mode: "current"
+  display_mode: "keyword"
+  max_news_per_keyword: 0
+
+filter:
+  method: "keyword"
+
+display:
+  regions:
+    hotlist: true
+    rss: true
+    ai_analysis: true
+    new_items: false
+    standalone: false
