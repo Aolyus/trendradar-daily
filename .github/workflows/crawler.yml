@@ -58,3 +58,10 @@ jobs:
           AI_API_BASE: ${{ secrets.AI_API_BASE }}
           GITHUB_ACTIONS: true
         run: uv run python -m trendradar
+      - name: Generate video topic radar
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          AI_API_BASE: ${{ secrets.AI_API_BASE }}
+        run: python my-config/scripts/topic_picker.py --trendradar-dir TrendRadar
