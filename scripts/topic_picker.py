@@ -15,6 +15,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sqlite3
 import sys
 import textwrap
@@ -158,18 +159,33 @@ def build_prompt(news_items: list[dict[str, Any]], rss_items: list[dict[str, Any
 
 请基于下面的 AI 资讯候选池，筛选 3-5 个最值得拍成短视频的选题。
 
-每个选题请输出：
-1. 选题标题
-2. 推荐指数：1-10
-3. 为什么今天值得拍
-4. 适合切入角度
-5. 3秒开头钩子
-6. 60-90秒视频结构
-7. 可用标题备选 2 个
-8. 风险提示
-9. 引用到的新闻来源标题，最多 3 条
+输出要求：
+- 不要使用 Markdown 语法：不要用 #、##、**、```。
+- 不要长篇大段，要适合手机上快速扫读。
+- 每个选题最多 220 字，优先短句。
+- 用下面这个纯文本格式输出：
 
-请用中文，直接给飞书可读的 Markdown 风格文本，不要输出 JSON。
+今日最值得拍：一句话总结当天最大机会
+
+━━━━━━━━━━━━
+01｜选题标题
+推荐：9/10
+一句话判断：为什么值得拍
+切入角度：从哪个反常识或趋势点讲
+开头钩子：3 秒开场白
+视频结构：
+0-10秒：...
+10-35秒：...
+35-70秒：...
+70-90秒：...
+标题备选：
+1. ...
+2. ...
+风险：不要怎么误读
+来源：最多列 2 条新闻标题
+
+最后加一段：
+今天优先拍哪条：只选 1 条，并说明原因。
 
 【热榜候选】
 {compact_items(news_items, "hotlist") or "无"}
@@ -187,6 +203,16 @@ def normalize_model(model: str) -> str:
     if model.startswith("deepseek/"):
         return model.split("/", 1)[1]
     return model or "deepseek-chat"
+
+
+def clean_for_feishu_text(text: str) -> str:
+    """Make model output easier to read in Feishu plain-text messages."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = text.replace("**", "")
+    text = text.replace("```", "")
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def chat_completion(messages: list[dict[str, str]]) -> str:
@@ -284,6 +310,7 @@ def main() -> int:
 
     analysis = chat_completion(messages)
     today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%Y-%m-%d")
+    analysis = clean_for_feishu_text(analysis)
     final_text = f"今日 AI 视频选题雷达｜{today}\n\n{analysis}\n\n来源：TrendRadar 今日资讯 + DeepSeek 二次选题分析"
     send_feishu(final_text)
     return 0
