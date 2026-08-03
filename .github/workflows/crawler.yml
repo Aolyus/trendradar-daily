@@ -2,15 +2,18 @@ name: Get Hot News
 
 on:
   schedule:
-    - cron: "17 2 * * *"
+    - cron: "17 2 * * *"  # 北京时间 10:17
+    - cron: "47 2 * * *"  # 北京时间 10:47 补跑
+    - cron: "17 3 * * *"  # 北京时间 11:17 补跑
   workflow_dispatch:
 
 concurrency:
   group: trendradar-${{ github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   crawl:
@@ -18,12 +21,79 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Check whether today's scheduled push already succeeded
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import urllib.request
+
+          event_name = os.environ["EVENT_NAME"]
+          run_id = int(os.environ["RUN_ID"])
+
+          if event_name != "schedule":
+              print("Manual run, always execute.")
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+                  f.write("should_run=true\n")
+              raise SystemExit(0)
+
+          tz = dt.timezone(dt.timedelta(hours=8))
+          today = dt.datetime.now(tz).date()
+          start_local = dt.datetime.combine(today, dt.time.min, tzinfo=tz)
+          start_utc = start_local.astimezone(dt.timezone.utc)
+
+          url = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/actions/runs?per_page=50"
+          req = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "trendradar-daily",
+              },
+          )
+          data = json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
+
+          already_success = False
+          for run in data.get("workflow_runs", []):
+              if int(run["id"]) == run_id:
+                  continue
+              if run.get("name") != "Get Hot News":
+                  continue
+              if run.get("event") != "schedule":
+                  continue
+              if run.get("conclusion") != "success":
+                  continue
+
+              created = dt.datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+              if created >= start_utc:
+                  already_success = True
+                  print("Found successful scheduled run today:", run["html_url"])
+                  break
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"should_run={'false' if already_success else 'true'}\n")
+
+          if already_success:
+              print("Today's scheduled push already succeeded. Skip this backup run.")
+          else:
+              print("No successful scheduled run today. Continue.")
+          PY
+
       - name: Checkout my config repository
+        if: steps.guard.outputs.should_run == 'true'
         uses: actions/checkout@v4
         with:
           path: my-config
 
       - name: Checkout TrendRadar source
+        if: steps.guard.outputs.should_run == 'true'
         uses: actions/checkout@v4
         with:
           repository: SANSAN0/TRENDRADAR
@@ -31,24 +101,29 @@ jobs:
           path: TrendRadar
 
       - name: Copy my config
+        if: steps.guard.outputs.should_run == 'true'
         run: |
           if [ -d my-config/config ]; then
             cp -r my-config/config/* TrendRadar/config/
           fi
 
       - name: Set up Python
+        if: steps.guard.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install uv
+        if: steps.guard.outputs.should_run == 'true'
         uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
+        if: steps.guard.outputs.should_run == 'true'
         working-directory: TrendRadar
         run: uv sync --frozen --no-dev
 
       - name: Run TrendRadar
+        if: steps.guard.outputs.should_run == 'true'
         working-directory: TrendRadar
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
@@ -58,7 +133,10 @@ jobs:
           AI_API_BASE: ${{ secrets.AI_API_BASE }}
           GITHUB_ACTIONS: true
         run: uv run python -m trendradar
+
       - name: Generate video topic radar
+        if: steps.guard.outputs.should_run == 'true'
+        continue-on-error: true
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
