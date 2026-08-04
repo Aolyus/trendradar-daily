@@ -1,4 +1,5 @@
 name: Get Hot News
+run-name: Get Hot News - ${{ github.event.schedule || 'manual' }}
 
 on:
   schedule:
@@ -40,20 +41,29 @@ jobs:
           schedule = os.environ.get("EVENT_SCHEDULE", "")
           event_name = os.environ.get("EVENT_NAME", "")
 
+          morning_schedules = {"17 3 * * *", "47 3 * * *", "17 4 * * *"}
+          afternoon_schedules = {"17 7 * * *", "47 7 * * *", "17 8 * * *"}
+
           if event_name != "schedule":
               slot = "manual"
               report_mode = "current"
-          elif schedule in ("17 7 * * *", "47 7 * * *", "17 8 * * *"):
+          elif schedule in afternoon_schedules:
               slot = "afternoon"
               report_mode = "incremental"
-          else:
+          elif schedule in morning_schedules:
               slot = "morning"
+              report_mode = "current"
+          else:
+              slot = "unknown"
               report_mode = "current"
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"slot={slot}\n")
               f.write(f"report_mode={report_mode}\n")
+              f.write(f"schedule={schedule}\n")
 
+          print("event_name:", event_name)
+          print("schedule:", schedule)
           print("slot:", slot)
           print("report_mode:", report_mode)
           PY
@@ -88,12 +98,21 @@ jobs:
           start_local = dt.datetime.combine(today, dt.time.min, tzinfo=tz)
           start_utc = start_local.astimezone(dt.timezone.utc)
 
-          if slot == "morning":
-              slot_schedules = {"17 3 * * *", "47 3 * * *", "17 4 * * *"}
-          else:
-              slot_schedules = {"17 7 * * *", "47 7 * * *", "17 8 * * *"}
+          morning_schedules = {"17 3 * * *", "47 3 * * *", "17 4 * * *"}
+          afternoon_schedules = {"17 7 * * *", "47 7 * * *", "17 8 * * *"}
 
-          url = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/actions/runs?per_page=80"
+          def title_to_slot(title):
+              if not title:
+                  return None
+              for cron in morning_schedules:
+                  if cron in title:
+                      return "morning"
+              for cron in afternoon_schedules:
+                  if cron in title:
+                      return "afternoon"
+              return None
+
+          url = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/actions/runs?per_page=100"
           req = urllib.request.Request(
               url,
               headers={
@@ -114,27 +133,23 @@ jobs:
                   continue
               if run.get("conclusion") != "success":
                   continue
-              if run.get("display_title") and run.get("display_title") != "Get Hot News":
-                  pass
 
               created = dt.datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
               if created < start_utc:
                   continue
 
-              # GitHub API list does not expose the exact cron string reliably here.
-              # Use local created time to classify the previous successful run.
-              local_hour = created.astimezone(tz).hour
-              previous_slot = "afternoon" if local_hour >= 14 else "morning"
+              previous_slot = title_to_slot(run.get("display_title", ""))
               if previous_slot == slot:
                   already_success = True
                   print("Found successful scheduled run in this slot today:", run["html_url"])
+                  print("display_title:", run.get("display_title", ""))
                   break
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"should_run={'false' if already_success else 'true'}\n")
 
           if already_success:
-              print(f"Today's {slot} scheduled push already succeeded. Skip backup run.")
+              print(f"Today's {slot} scheduled push already succeeded. Skip this backup run.")
           else:
               print(f"No successful {slot} scheduled run today. Continue.")
           PY
