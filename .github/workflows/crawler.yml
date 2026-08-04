@@ -3,20 +3,19 @@ run-name: Get Hot News - ${{ github.event.schedule || 'manual' }}
 
 on:
   schedule:
-    # 上午完整推送：北京时间 11:17 / 11:47 / 12:17
-    # GitHub Actions 可能延迟，所以放 3 个备份点；成功一次后，后面的会自动跳过
+    # Beijing 10:47 / 11:17 / 11:47. The first successful run wins.
+    - cron: "47 2 * * *"
     - cron: "17 3 * * *"
     - cron: "47 3 * * *"
-    - cron: "17 4 * * *"
 
-    # 下午增量推送：北京时间 15:17 / 15:47 / 16:17
-    # 同样是备份点；成功一次后，后面的会自动跳过
+    # Beijing 14:47 / 15:17 / 15:47. The first successful run wins.
+    - cron: "47 6 * * *"
     - cron: "17 7 * * *"
     - cron: "47 7 * * *"
-    - cron: "17 8 * * *"
 
   workflow_dispatch:
 
+# Delayed schedules are serialized. A later backup cannot race the first run.
 concurrency:
   group: trendradar-${{ github.ref_name }}
   cancel-in-progress: false
@@ -28,11 +27,13 @@ permissions:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Decide run slot
+        shell: bash
         run: |
+          echo "Current event: ${{ github.event_name }}"
           echo "Current schedule: ${{ github.event.schedule }}"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -42,51 +43,101 @@ jobs:
           fi
 
           case "${{ github.event.schedule }}" in
-            "17 7 * * *"|"47 7 * * *"|"17 8 * * *")
+            "47 6 * * *"|"17 7 * * *"|"47 7 * * *")
               echo "RUN_SLOT=afternoon" >> "$GITHUB_ENV"
               echo "REPORT_MODE=incremental" >> "$GITHUB_ENV"
+              echo "WINDOW_START=14:35" >> "$GITHUB_ENV"
+              echo "WINDOW_END=16:10" >> "$GITHUB_ENV"
               ;;
             *)
               echo "RUN_SLOT=morning" >> "$GITHUB_ENV"
-              echo "REPORT_MODE=current" >> "$GITHUB_ENV"
+              echo "REPORT_MODE=daily" >> "$GITHUB_ENV"
+              echo "WINDOW_START=10:35" >> "$GITHUB_ENV"
+              echo "WINDOW_END=12:10" >> "$GITHUB_ENV"
               ;;
           esac
 
-      - name: Check whether this slot already succeeded today
+      - name: Reject excessively delayed schedules
+        if: env.RUN_SLOT != 'manual'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, time, timezone, timedelta
+
+          china_tz = timezone(timedelta(hours=8))
+          now = datetime.now(timezone.utc).astimezone(china_tz)
+          start = time.fromisoformat(os.environ["WINDOW_START"])
+          end = time.fromisoformat(os.environ["WINDOW_END"])
+
+          print(f"Beijing time now: {now:%Y-%m-%d %H:%M:%S}")
+          print(f"Allowed window: {start:%H:%M} - {end:%H:%M}")
+
+          if not (start <= now.time().replace(tzinfo=None) <= end):
+              print("This schedule arrived too late. Skip it to prevent delayed duplicate pushes.")
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+                  env_file.write("SKIP_REST=true\n")
+                  env_file.write("SKIP_REASON=outside-window\n")
+          PY
+
+      - name: Check whether this slot already pushed today
+        if: env.RUN_SLOT != 'manual' && env.SKIP_REST != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
         run: |
-          if [ "$RUN_SLOT" = "manual" ]; then
-            echo "Manual run: do not skip."
-            exit 0
-          fi
-
           python - <<'PY'
           import json
           import os
           import subprocess
-          from datetime import datetime, timezone, timedelta
+          from datetime import datetime, time, timezone, timedelta
 
           repo = os.environ["REPO"]
           token = os.environ["GH_TOKEN"]
           current_run_id = int(os.environ["CURRENT_RUN_ID"])
           current_slot = os.environ["RUN_SLOT"]
+          china_tz = timezone(timedelta(hours=8))
+          china_today = datetime.now(timezone.utc).astimezone(china_tz).date()
+
+          morning_crons = {
+              "47 2 * * *", "17 3 * * *", "47 3 * * *",
+              # Old schedules are included during the migration day.
+              "17 4 * * *",
+          }
+          afternoon_crons = {
+              "47 6 * * *", "17 7 * * *", "47 7 * * *",
+              # Old schedules are included during the migration day.
+              "17 8 * * *",
+          }
 
           def title_to_slot(title: str):
-              title = title or ""
-              if "17 7 * * *" in title or "47 7 * * *" in title or "17 8 * * *" in title:
+              if any(cron in title for cron in afternoon_crons):
                   return "afternoon"
-              if "17 3 * * *" in title or "47 3 * * *" in title or "17 4 * * *" in title:
+              if any(cron in title for cron in morning_crons):
                   return "morning"
               return None
 
-          url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=50&branch=main"
+          def started_in_slot(run_started_at: str, slot: str) -> bool:
+              started = datetime.fromisoformat(
+                  run_started_at.replace("Z", "+00:00")
+              ).astimezone(china_tz)
+              if started.date() != china_today:
+                  return False
+              current_time = started.time().replace(tzinfo=None)
+              if slot == "morning":
+                  return time(10, 35) <= current_time <= time(12, 10)
+              return time(14, 35) <= current_time <= time(16, 10)
+
+          url = (
+              f"https://api.github.com/repos/{repo}/actions/workflows/"
+              "crawler.yml/runs?per_page=50&branch=main"
+          )
           result = subprocess.run(
               [
-                  "curl",
-                  "-sS",
+                  "curl", "--fail", "--silent", "--show-error",
+                  "--retry", "3", "--retry-delay", "2",
                   "-H", f"Authorization: Bearer {token}",
                   "-H", "Accept: application/vnd.github+json",
                   url,
@@ -96,60 +147,39 @@ jobs:
               capture_output=True,
           )
 
-          data = json.loads(result.stdout)
-          runs = data.get("workflow_runs", [])
-
-          china_today = datetime.now(timezone.utc).astimezone(
-              timezone(timedelta(hours=8))
-          ).date()
-
+          runs = json.loads(result.stdout).get("workflow_runs", [])
           should_skip = False
 
           for run in runs:
               if int(run.get("id", 0)) == current_run_id:
                   continue
-
               if run.get("event") != "schedule":
                   continue
-
               if run.get("status") != "completed":
                   continue
-
               if run.get("conclusion") != "success":
                   continue
 
-              run_name = run.get("name", "") or ""
-              display_title = run.get("display_title", "") or ""
-              combined_title = f"{run_name} {display_title}"
-
-              if "Get Hot News" not in combined_title:
+              title = " ".join(
+                  filter(None, [run.get("name", ""), run.get("display_title", "")])
+              )
+              if title_to_slot(title) != current_slot:
                   continue
 
-              previous_slot = title_to_slot(combined_title)
-              if previous_slot != current_slot:
+              started_at = run.get("run_started_at") or run.get("created_at")
+              if not started_at or not started_in_slot(started_at, current_slot):
                   continue
 
-              created_at = run.get("created_at")
-              if not created_at:
-                  continue
-
-              created_date = datetime.fromisoformat(
-                  created_at.replace("Z", "+00:00")
-              ).astimezone(timezone(timedelta(hours=8))).date()
-
-              if created_date != china_today:
-                  continue
-
-              print(f"Already succeeded today for slot: {current_slot}")
-              print(f"Previous run: {run.get('html_url')}")
+              print(f"This slot already pushed successfully: {run.get('html_url')}")
               should_skip = True
               break
 
           if should_skip:
-              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-                  f.write("SKIP_REST=true\n")
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+                  env_file.write("SKIP_REST=true\n")
+                  env_file.write("SKIP_REASON=slot-already-succeeded\n")
           else:
-              print(f"No successful run found today for slot: {current_slot}")
+              print(f"No successful push found today for slot: {current_slot}")
           PY
 
       - name: Checkout my config repository
@@ -168,6 +198,7 @@ jobs:
 
       - name: Copy my config
         if: env.SKIP_REST != 'true'
+        shell: bash
         run: |
           if [ -d my-config/config ]; then
             cp -r my-config/config/* TrendRadar/config/
@@ -175,29 +206,43 @@ jobs:
 
       - name: Apply report mode
         if: env.SKIP_REST != 'true'
+        shell: bash
         run: |
           python - <<'PY'
-          from pathlib import Path
-          import re
           import os
+          import re
+          from pathlib import Path
 
-          mode = os.environ.get("REPORT_MODE", "current")
+          mode = os.environ["REPORT_MODE"]
           config_path = Path("TrendRadar/config/config.yaml")
+          lines = config_path.read_text(encoding="utf-8").splitlines()
 
-          if not config_path.exists():
-              raise FileNotFoundError("TrendRadar/config/config.yaml not found")
+          report_index = next(
+              (index for index, line in enumerate(lines) if line.strip() == "report:"),
+              None,
+          )
+          if report_index is None:
+              raise RuntimeError("The report section was not found in config.yaml")
 
-          text = config_path.read_text(encoding="utf-8")
+          mode_updated = False
+          for index in range(report_index + 1, len(lines)):
+              line = lines[index]
+              if line and not line[0].isspace():
+                  break
+              if re.match(r"^\s+mode\s*:", line):
+                  indent = line[: len(line) - len(line.lstrip())]
+                  comment = ""
+                  if "#" in line:
+                      comment = "  #" + line.split("#", 1)[1]
+                  lines[index] = f'{indent}mode: "{mode}"{comment}'
+                  mode_updated = True
+                  break
 
-          pattern = r"(?m)^(\s*mode:\s*)(daily|current|incremental)(\s*(#.*)?)$"
+          if not mode_updated:
+              raise RuntimeError("report.mode was not found in config.yaml")
 
-          if re.search(pattern, text):
-              text = re.sub(pattern, rf"\1{mode}\3", text, count=1)
-          else:
-              text += f"\nmode: {mode}\n"
-
-          config_path.write_text(text, encoding="utf-8")
-          print(f"TrendRadar report mode set to: {mode}")
+          config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(f"TrendRadar report.mode set to: {mode}")
           PY
 
       - name: Set up Python
@@ -227,8 +272,10 @@ jobs:
           GITHUB_ACTIONS: true
         run: uv run python -m trendradar
 
+      # The custom topic picker runs only in the morning. The afternoon is
+      # incremental news completion, so it should not repeat the same topics.
       - name: Generate video topic radar
-        if: env.SKIP_REST != 'true'
+        if: env.SKIP_REST != 'true' && env.RUN_SLOT != 'afternoon'
         continue-on-error: true
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
@@ -239,5 +286,4 @@ jobs:
 
       - name: Skip notice
         if: env.SKIP_REST == 'true'
-        run: |
-          echo "This backup schedule is skipped because this slot already succeeded today."
+        run: echo "Skipped safely. Reason: $SKIP_REASON"
