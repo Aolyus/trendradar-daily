@@ -286,4 +286,5 @@ jobs:
 
       - name: Skip notice
         if: env.SKIP_REST == 'true'
-        run: echo "Skipped safely. Reason: $SKIP_REASON"
+        run: |
+          echo "Skipped safely. Reason: $SKIP_REASON"
