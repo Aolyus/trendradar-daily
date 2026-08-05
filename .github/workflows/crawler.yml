@@ -3,15 +3,17 @@ run-name: Get Hot News - ${{ github.event.schedule || 'manual' }}
 
 on:
   schedule:
-    # Beijing 10:47 / 11:17 / 11:47. The first successful run wins.
+    # Beijing 10:47, then every 10 minutes from 11:07 to 11:57, with a
+    # final 12:07 fallback. GitHub may delay or drop individual schedules.
     - cron: "47 2 * * *"
-    - cron: "17 3 * * *"
-    - cron: "47 3 * * *"
+    - cron: "7,17,27,37,47,57 3 * * *"
+    - cron: "7 4 * * *"
 
-    # Beijing 14:47 / 15:17 / 15:47. The first successful run wins.
+    # Beijing 14:47, then every 10 minutes from 15:07 to 15:57, with a
+    # final 16:07 fallback. The first successful run wins.
     - cron: "47 6 * * *"
-    - cron: "17 7 * * *"
-    - cron: "47 7 * * *"
+    - cron: "7,17,27,37,47,57 7 * * *"
+    - cron: "7 8 * * *"
 
   workflow_dispatch:
 
@@ -43,7 +45,7 @@ jobs:
           fi
 
           case "${{ github.event.schedule }}" in
-            "47 6 * * *"|"17 7 * * *"|"47 7 * * *")
+            "47 6 * * *"|"7,17,27,37,47,57 7 * * *"|"7 8 * * *")
               echo "RUN_SLOT=afternoon" >> "$GITHUB_ENV"
               echo "REPORT_MODE=incremental" >> "$GITHUB_ENV"
               echo "WINDOW_START=14:35" >> "$GITHUB_ENV"
@@ -102,14 +104,14 @@ jobs:
           china_today = datetime.now(timezone.utc).astimezone(china_tz).date()
 
           morning_crons = {
-              "47 2 * * *", "17 3 * * *", "47 3 * * *",
+              "47 2 * * *", "7,17,27,37,47,57 3 * * *", "7 4 * * *",
               # Old schedules are included during the migration day.
-              "17 4 * * *",
+              "17 3 * * *", "47 3 * * *", "17 4 * * *",
           }
           afternoon_crons = {
-              "47 6 * * *", "17 7 * * *", "47 7 * * *",
+              "47 6 * * *", "7,17,27,37,47,57 7 * * *", "7 8 * * *",
               # Old schedules are included during the migration day.
-              "17 8 * * *",
+              "17 7 * * *", "47 7 * * *", "17 8 * * *",
           }
 
           def title_to_slot(title: str):
