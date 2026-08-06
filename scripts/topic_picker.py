@@ -19,6 +19,7 @@ import re
 import sqlite3
 import sys
 import textwrap
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -270,15 +271,32 @@ def send_feishu(text: str) -> None:
             "msg_type": "text",
             "content": {"text": chunk + suffix},
         }
-        req = urllib.request.Request(
-            webhook,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-        log(f"Feishu response: {body[:300]}")
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            req = urllib.request.Request(
+                webhook,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    body = resp.read().decode("utf-8", errors="replace")
+                result = json.loads(body)
+                code = result.get("StatusCode", result.get("code"))
+                if code != 0:
+                    raise RuntimeError(f"Feishu rejected the message: {body[:500]}")
+                log(f"Feishu confirmed segment {index} on attempt {attempt}")
+                break
+            except (OSError, ValueError, RuntimeError, urllib.error.HTTPError) as exc:
+                last_error = exc
+                if attempt == 3:
+                    raise RuntimeError(
+                        f"Feishu segment {index} failed after 3 attempts"
+                    ) from last_error
+                wait_seconds = attempt * 2
+                log(f"Feishu attempt {attempt} failed; retrying in {wait_seconds}s: {exc}")
+                time.sleep(wait_seconds)
 
 
 def main() -> int:

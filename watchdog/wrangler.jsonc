@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trendradar-watchdog",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-06",
+  "triggers": {
+    "crons": [
+      "17 3 * * *",
+      "17 8 * * *"
+    ]
+  },
+  "vars": {
+    "GITHUB_OWNER": "Aolyus",
+    "GITHUB_REPO": "trendradar-daily",
+    "GITHUB_WORKFLOW": "crawler.yml",
+    "GITHUB_REF": "main"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

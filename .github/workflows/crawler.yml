@@ -1,213 +1,102 @@
 name: Get Hot News
-run-name: Get Hot News - ${{ github.event.schedule || 'manual' }}
+run-name: AI News - ${{ inputs.slot || github.event.schedule || 'manual' }} - ${{ inputs.source || 'github' }}
 
 on:
   schedule:
-    # Beijing 10:47, then every 10 minutes from 11:07 to 11:57, with a
-    # final 12:07 fallback. GitHub may delay or drop individual schedules.
+    # Primary clock, Beijing 10:47 and 15:47 (GitHub cron uses UTC).
     - cron: "47 2 * * *"
-    - cron: "7,17,27,37,47,57 3 * * *"
-    - cron: "7 4 * * *"
-
-    # Beijing 14:47, then every 10 minutes from 15:07 to 15:57, with a
-    # final 16:07 fallback. The first successful run wins.
-    - cron: "47 6 * * *"
-    - cron: "7,17,27,37,47,57 7 * * *"
-    - cron: "7 8 * * *"
+    - cron: "47 7 * * *"
 
   workflow_dispatch:
+    inputs:
+      slot:
+        description: "Delivery slot"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - morning
+          - afternoon
+      source:
+        description: "Trigger source"
+        required: true
+        default: manual
+        type: choice
+        options:
+          - manual
+          - watchdog
+      force:
+        description: "Ignore an existing success record"
+        required: true
+        default: false
+        type: boolean
+      dry_run:
+        description: "Collect only; do not send or record success"
+        required: true
+        default: false
+        type: boolean
 
-# Delayed schedules are serialized. A later backup cannot race the first run.
+# The primary clock and watchdog share one queue. They can never send in parallel.
 concurrency:
-  group: trendradar-${{ github.ref_name }}
+  group: trendradar-delivery
   cancel-in-progress: false
 
 permissions:
-  contents: read
-  actions: read
+  contents: write
 
 jobs:
-  crawl:
+  deliver:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
-      - name: Decide run slot
-        shell: bash
-        run: |
-          echo "Current event: ${{ github.event_name }}"
-          echo "Current schedule: ${{ github.event.schedule }}"
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "RUN_SLOT=manual" >> "$GITHUB_ENV"
-            echo "REPORT_MODE=current" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          case "${{ github.event.schedule }}" in
-            "47 6 * * *"|"7,17,27,37,47,57 7 * * *"|"7 8 * * *")
-              echo "RUN_SLOT=afternoon" >> "$GITHUB_ENV"
-              echo "REPORT_MODE=incremental" >> "$GITHUB_ENV"
-              echo "WINDOW_START=14:35" >> "$GITHUB_ENV"
-              echo "WINDOW_END=16:10" >> "$GITHUB_ENV"
-              ;;
-            *)
-              echo "RUN_SLOT=morning" >> "$GITHUB_ENV"
-              echo "REPORT_MODE=daily" >> "$GITHUB_ENV"
-              echo "WINDOW_START=10:35" >> "$GITHUB_ENV"
-              echo "WINDOW_END=12:10" >> "$GITHUB_ENV"
-              ;;
-          esac
-
-      - name: Reject excessively delayed schedules
-        if: env.RUN_SLOT != 'manual'
-        shell: bash
-        run: |
-          python - <<'PY'
-          import os
-          from datetime import datetime, time, timezone, timedelta
-
-          china_tz = timezone(timedelta(hours=8))
-          now = datetime.now(timezone.utc).astimezone(china_tz)
-          start = time.fromisoformat(os.environ["WINDOW_START"])
-          end = time.fromisoformat(os.environ["WINDOW_END"])
-
-          print(f"Beijing time now: {now:%Y-%m-%d %H:%M:%S}")
-          print(f"Allowed window: {start:%H:%M} - {end:%H:%M}")
-
-          if not (start <= now.time().replace(tzinfo=None) <= end):
-              print("This schedule arrived too late. Skip it to prevent delayed duplicate pushes.")
-              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
-                  env_file.write("SKIP_REST=true\n")
-                  env_file.write("SKIP_REASON=outside-window\n")
-          PY
-
-      - name: Check whether this slot already pushed today
-        if: env.RUN_SLOT != 'manual' && env.SKIP_REST != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          CURRENT_RUN_ID: ${{ github.run_id }}
-        shell: bash
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import subprocess
-          from datetime import datetime, time, timezone, timedelta
-
-          repo = os.environ["REPO"]
-          token = os.environ["GH_TOKEN"]
-          current_run_id = int(os.environ["CURRENT_RUN_ID"])
-          current_slot = os.environ["RUN_SLOT"]
-          china_tz = timezone(timedelta(hours=8))
-          china_today = datetime.now(timezone.utc).astimezone(china_tz).date()
-
-          morning_crons = {
-              "47 2 * * *", "7,17,27,37,47,57 3 * * *", "7 4 * * *",
-              # Old schedules are included during the migration day.
-              "17 3 * * *", "47 3 * * *", "17 4 * * *",
-          }
-          afternoon_crons = {
-              "47 6 * * *", "7,17,27,37,47,57 7 * * *", "7 8 * * *",
-              # Old schedules are included during the migration day.
-              "17 7 * * *", "47 7 * * *", "17 8 * * *",
-          }
-
-          def title_to_slot(title: str):
-              if any(cron in title for cron in afternoon_crons):
-                  return "afternoon"
-              if any(cron in title for cron in morning_crons):
-                  return "morning"
-              return None
-
-          def started_in_slot(run_started_at: str, slot: str) -> bool:
-              started = datetime.fromisoformat(
-                  run_started_at.replace("Z", "+00:00")
-              ).astimezone(china_tz)
-              if started.date() != china_today:
-                  return False
-              current_time = started.time().replace(tzinfo=None)
-              if slot == "morning":
-                  return time(10, 35) <= current_time <= time(12, 10)
-              return time(14, 35) <= current_time <= time(16, 10)
-
-          url = (
-              f"https://api.github.com/repos/{repo}/actions/workflows/"
-              "crawler.yml/runs?per_page=50&branch=main"
-          )
-          result = subprocess.run(
-              [
-                  "curl", "--fail", "--silent", "--show-error",
-                  "--retry", "3", "--retry-delay", "2",
-                  "-H", f"Authorization: Bearer {token}",
-                  "-H", "Accept: application/vnd.github+json",
-                  url,
-              ],
-              check=True,
-              text=True,
-              capture_output=True,
-          )
-
-          runs = json.loads(result.stdout).get("workflow_runs", [])
-          should_skip = False
-
-          for run in runs:
-              if int(run.get("id", 0)) == current_run_id:
-                  continue
-              if run.get("event") != "schedule":
-                  continue
-              if run.get("status") != "completed":
-                  continue
-              if run.get("conclusion") != "success":
-                  continue
-
-              title = " ".join(
-                  filter(None, [run.get("name", ""), run.get("display_title", "")])
-              )
-              if title_to_slot(title) != current_slot:
-                  continue
-
-              started_at = run.get("run_started_at") or run.get("created_at")
-              if not started_at or not started_in_slot(started_at, current_slot):
-                  continue
-
-              print(f"This slot already pushed successfully: {run.get('html_url')}")
-              should_skip = True
-              break
-
-          if should_skip:
-              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
-                  env_file.write("SKIP_REST=true\n")
-                  env_file.write("SKIP_REASON=slot-already-succeeded\n")
-          else:
-              print(f"No successful push found today for slot: {current_slot}")
-          PY
-
-      - name: Checkout my config repository
-        if: env.SKIP_REST != 'true'
+      - name: Checkout configuration and delivery state
         uses: actions/checkout@v4
         with:
           path: my-config
+          fetch-depth: 0
 
-      - name: Checkout TrendRadar source
-        if: env.SKIP_REST != 'true'
+      - name: Resolve slot and delivery gate
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          REQUESTED_SLOT: ${{ inputs.slot || 'auto' }}
+          TRIGGER_SOURCE: ${{ inputs.source || 'github-schedule' }}
+          FORCE_RUN: ${{ inputs.force || false }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        shell: bash
+        run: |
+          python my-config/scripts/delivery_gate.py gate \
+            --state my-config/state/delivery-log.json \
+            --event-name "$EVENT_NAME" \
+            --schedule "$EVENT_SCHEDULE" \
+            --requested-slot "$REQUESTED_SLOT" \
+            --source "$TRIGGER_SOURCE" \
+            --force "$FORCE_RUN" \
+            --dry-run "$DRY_RUN" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned TrendRadar source
+        if: steps.gate.outputs.should_run == 'true'
         uses: actions/checkout@v4
         with:
           repository: SANSAN0/TRENDRADAR
-          ref: master
+          ref: 8ee26026ba6c11dec41a95fb3895a7162876caa1
           path: TrendRadar
+          persist-credentials: false
 
-      - name: Copy my config
-        if: env.SKIP_REST != 'true'
+      - name: Copy custom configuration
+        if: steps.gate.outputs.should_run == 'true'
         shell: bash
         run: |
-          if [ -d my-config/config ]; then
-            cp -r my-config/config/* TrendRadar/config/
-          fi
+          cp -r my-config/config/* TrendRadar/config/
 
       - name: Apply report mode
-        if: env.SKIP_REST != 'true'
+        if: steps.gate.outputs.should_run == 'true'
+        env:
+          REPORT_MODE: ${{ steps.gate.outputs.report_mode }}
         shell: bash
         run: |
           python - <<'PY'
@@ -218,7 +107,6 @@ jobs:
           mode = os.environ["REPORT_MODE"]
           config_path = Path("TrendRadar/config/config.yaml")
           lines = config_path.read_text(encoding="utf-8").splitlines()
-
           report_index = next(
               (index for index, line in enumerate(lines) if line.strip() == "report:"),
               None,
@@ -233,13 +121,9 @@ jobs:
                   break
               if re.match(r"^\s+mode\s*:", line):
                   indent = line[: len(line) - len(line.lstrip())]
-                  comment = ""
-                  if "#" in line:
-                      comment = "  #" + line.split("#", 1)[1]
-                  lines[index] = f'{indent}mode: "{mode}"{comment}'
+                  lines[index] = f'{indent}mode: "{mode}"'
                   mode_updated = True
                   break
-
           if not mode_updated:
               raise RuntimeError("report.mode was not found in config.yaml")
 
@@ -248,22 +132,22 @@ jobs:
           PY
 
       - name: Set up Python
-        if: env.SKIP_REST != 'true'
+        if: steps.gate.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install uv
-        if: env.SKIP_REST != 'true'
+        if: steps.gate.outputs.should_run == 'true'
         uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
-        if: env.SKIP_REST != 'true'
+        if: steps.gate.outputs.should_run == 'true'
         working-directory: TrendRadar
         run: uv sync --frozen --no-dev
 
-      - name: Run TrendRadar
-        if: env.SKIP_REST != 'true'
+      - name: Run TrendRadar with strict Feishu status
+        if: steps.gate.outputs.should_run == 'true'
         working-directory: TrendRadar
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
@@ -272,21 +156,76 @@ jobs:
           AI_MODEL: ${{ secrets.AI_MODEL }}
           AI_API_BASE: ${{ secrets.AI_API_BASE }}
           GITHUB_ACTIONS: true
-        run: uv run python -m trendradar
+          DRY_RUN: ${{ steps.gate.outputs.dry_run }}
+        shell: bash
+        run: |
+          args=()
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          uv run python ../my-config/scripts/run_trendradar_strict.py "${args[@]}"
 
-      # The custom topic picker runs only in the morning. The afternoon is
-      # incremental news completion, so it should not repeat the same topics.
+      # Video topic analysis is useful but is not allowed to trigger a duplicate
+      # full digest. It retries internally and remains best-effort.
       - name: Generate video topic radar
-        if: env.SKIP_REST != 'true' && env.RUN_SLOT != 'afternoon'
+        if: steps.gate.outputs.should_run == 'true' && steps.gate.outputs.slot == 'morning'
         continue-on-error: true
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
           AI_API_BASE: ${{ secrets.AI_API_BASE }}
-        run: python my-config/scripts/topic_picker.py --trendradar-dir TrendRadar
-
-      - name: Skip notice
-        if: env.SKIP_REST == 'true'
+          DRY_RUN: ${{ steps.gate.outputs.dry_run }}
+        shell: bash
         run: |
-          echo "Skipped safely. Reason: $SKIP_REASON"
+          args=()
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          python my-config/scripts/topic_picker.py --trendradar-dir TrendRadar "${args[@]}"
+
+      - name: Record successful delivery
+        if: steps.gate.outputs.should_run == 'true' && steps.gate.outputs.dry_run != 'true'
+        env:
+          SLOT: ${{ steps.gate.outputs.slot }}
+          SOURCE: ${{ steps.gate.outputs.source }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          python my-config/scripts/delivery_gate.py mark \
+            --state my-config/state/delivery-log.json \
+            --slot "$SLOT" \
+            --source "$SOURCE" \
+            --run-id "$RUN_ID" \
+            --run-url "$RUN_URL"
+
+          cd my-config
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/delivery-log.json
+          git commit -m "Record $SLOT delivery [skip ci]"
+
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "State push attempt $attempt failed; retrying..."
+            sleep $((attempt * 3))
+          done
+          echo "Unable to persist the delivery state after 3 attempts."
+          exit 1
+
+      - name: Delivery summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## AI news delivery"
+            echo "- slot: ${{ steps.gate.outputs.slot || 'unresolved' }}"
+            echo "- source: ${{ steps.gate.outputs.source || 'unknown' }}"
+            echo "- should_run: ${{ steps.gate.outputs.should_run || 'false' }}"
+            echo "- gate_reason: ${{ steps.gate.outputs.reason || 'not-run' }}"
+            echo "- dry_run: ${{ steps.gate.outputs.dry_run || 'false' }}"
+            echo "- job_status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
