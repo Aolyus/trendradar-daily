@@ -34,6 +34,7 @@ if hasattr(sys.stderr, "reconfigure"):
 MAX_NEWS_ITEMS = 80
 MAX_RSS_ITEMS = 80
 MAX_FEISHU_TEXT = 12000
+NO_STRONG_TOPIC = "NO_STRONG_TOPIC"
 
 
 def log(message: str) -> None:
@@ -200,6 +201,94 @@ def build_prompt(news_items: list[dict[str, Any]], rss_items: list[dict[str, Any
     ]
 
 
+def build_slot_prompt(
+    news_items: list[dict[str, Any]],
+    rss_items: list[dict[str, Any]],
+    slot: str,
+) -> list[dict[str, str]]:
+    """Build a clean Chinese prompt for the morning or afternoon slot."""
+    today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%Y-%m-%d")
+    system = (
+        "你是一名敏锐的中文 AI 内容选题策划。你的任务不是复述新闻，而是判断哪些资讯"
+        "适合做成短视频，并给出有传播力、可验证、可执行的切入角度。"
+        "偏好反常识、趋势判断，以及普通用户、内容创作者和创业者能够理解的影响。"
+        "不要夸大，不要编造事实，不要把未经证实的消息当成定论。"
+    )
+
+    if slot == "afternoon":
+        instructions = f"""
+今天日期：{today}
+
+下面只包含今天下午新增或发生变化的资讯。请先判断其中是否出现值得马上补充的视频选题。
+
+筛选标准：
+- 相比早报必须有明显新增事实、新产品、新政策、新玩法或重要进展。
+- 只选择 1-3 个强选题，不要重复早上的常规话题，不要为了凑数降低标准。
+- 如果没有足够重要且适合短视频的新内容，只输出一行：{NO_STRONG_TOPIC}
+- 不要使用 Markdown 标记，不要使用 #、##、** 或代码块。
+- 每个选题控制在 220 字以内，适合手机快速扫描。
+
+有强选题时，严格使用以下纯文本格式：
+
+下午新增选题：一句话说明下午最值得关注的变化
+
+01｜选题标题
+推荐：9/10
+新增事实：与早报相比新在哪里
+切入角度：从哪个反常识或趋势点讲
+开头钩子：3 秒开场白
+视频结构：用三句话写清起因、影响和结论
+标题备选：给出 2 个
+风险：哪些信息仍需核实
+来源：最多列 2 条资讯标题
+
+最后补充：下午最优先拍哪一条，以及原因。
+"""
+        heading = "下午增量候选"
+    else:
+        instructions = f"""
+今天日期：{today}
+
+请基于下面的 AI 资讯候选池，筛选 3-5 个最值得拍成短视频的选题。
+
+输出要求：
+- 不要使用 Markdown 标记，不要使用 #、##、** 或代码块。
+- 不要写长篇大段，要适合手机快速扫描。
+- 每个选题最多 220 字，优先使用短句。
+
+严格使用以下纯文本格式：
+
+今日最值得拍：一句话总结当天最大的内容机会
+
+01｜选题标题
+推荐：9/10
+一句话判断：为什么值得拍
+切入角度：从哪个反常识或趋势点讲
+开头钩子：3 秒开场白
+视频结构：用四句话写清起因、证据、影响和结论
+标题备选：给出 2 个
+风险：哪些信息需要避免误读
+来源：最多列 2 条资讯标题
+
+最后补充：今天最优先拍哪一条，以及原因。
+"""
+        heading = "今日候选"
+
+    user = f"""
+{instructions.strip()}
+
+【{heading}·热榜】
+{compact_items(news_items, "hotlist") or "无"}
+
+【{heading}·RSS】
+{compact_items(rss_items, "rss") or "无"}
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
 def normalize_model(model: str) -> str:
     if model.startswith("deepseek/"):
         return model.split("/", 1)[1]
@@ -214,6 +303,10 @@ def clean_for_feishu_text(text: str) -> str:
     text = text.replace("```", "")
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def has_strong_topic(text: str) -> bool:
+    return text.strip().upper() != NO_STRONG_TOPIC
 
 
 def chat_completion(messages: list[dict[str, str]]) -> str:
@@ -302,6 +395,7 @@ def send_feishu(text: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--trendradar-dir", default="TrendRadar", help="TrendRadar checkout directory")
+    parser.add_argument("--slot", choices=("morning", "afternoon"), default="morning")
     parser.add_argument("--dry-run", action="store_true", help="Print collected input without calling AI or Feishu")
     args = parser.parse_args()
 
@@ -321,7 +415,7 @@ def main() -> int:
     if not news_items and not rss_items:
         raise RuntimeError("No TrendRadar items found for topic picking")
 
-    messages = build_prompt(news_items, rss_items)
+    messages = build_slot_prompt(news_items, rss_items, args.slot)
     if args.dry_run:
         print(messages[-1]["content"])
         return 0
@@ -329,7 +423,17 @@ def main() -> int:
     analysis = chat_completion(messages)
     today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%Y-%m-%d")
     analysis = clean_for_feishu_text(analysis)
-    final_text = f"今日 AI 视频选题雷达｜{today}\n\n{analysis}\n\n来源：TrendRadar 今日资讯 + DeepSeek 二次选题分析"
+    if args.slot == "afternoon" and not has_strong_topic(analysis):
+        log("No strong incremental afternoon topic; Feishu topic message skipped")
+        return 0
+
+    title = "下午 AI 视频选题补充" if args.slot == "afternoon" else "今日 AI 视频选题雷达"
+    source_note = (
+        "TrendRadar 下午新增资讯 + DeepSeek 增量选题分析"
+        if args.slot == "afternoon"
+        else "TrendRadar 今日资讯 + DeepSeek 二次选题分析"
+    )
+    final_text = f"{title}｜{today}\n\n{analysis}\n\n来源：{source_note}"
     send_feishu(final_text)
     return 0
 

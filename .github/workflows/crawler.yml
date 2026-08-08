@@ -165,10 +165,10 @@ jobs:
           fi
           uv run python ../my-config/scripts/run_trendradar_strict.py "${args[@]}"
 
-      # Video topic analysis is useful but is not allowed to trigger a duplicate
-      # full digest. It retries internally and remains best-effort.
+      # Morning produces the full topic radar. Afternoon only sends 1-3 strong
+      # incremental ideas and stays silent when no worthwhile update exists.
       - name: Generate video topic radar
-        if: steps.gate.outputs.should_run == 'true' && steps.gate.outputs.slot == 'morning'
+        if: steps.gate.outputs.should_run == 'true'
         continue-on-error: true
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
@@ -182,7 +182,10 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             args+=(--dry-run)
           fi
-          python my-config/scripts/topic_picker.py --trendradar-dir TrendRadar "${args[@]}"
+          python my-config/scripts/topic_picker.py \
+            --trendradar-dir TrendRadar \
+            --slot "${{ steps.gate.outputs.slot }}" \
+            "${args[@]}"
 
       - name: Record successful delivery
         if: steps.gate.outputs.should_run == 'true' && steps.gate.outputs.dry_run != 'true'
