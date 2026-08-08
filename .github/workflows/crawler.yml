@@ -175,6 +175,7 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
           AI_API_BASE: ${{ secrets.AI_API_BASE }}
+          ZHIPU_SEARCH_API_KEY: ${{ secrets.ZHIPU_SEARCH_API_KEY }}
           BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
           DRY_RUN: ${{ steps.gate.outputs.dry_run }}
         shell: bash
