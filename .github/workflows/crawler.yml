@@ -175,6 +175,7 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
           AI_API_BASE: ${{ secrets.AI_API_BASE }}
+          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
           DRY_RUN: ${{ steps.gate.outputs.dry_run }}
         shell: bash
         run: |
@@ -185,6 +186,7 @@ jobs:
           python my-config/scripts/topic_picker.py \
             --trendradar-dir TrendRadar \
             --slot "${{ steps.gate.outputs.slot }}" \
+            --social-cache my-config/state/social-validation-cache.json \
             "${args[@]}"
 
       - name: Record successful delivery
@@ -206,7 +208,7 @@ jobs:
           cd my-config
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/delivery-log.json
+          git add state/delivery-log.json state/social-validation-cache.json
           git commit -m "Record $SLOT delivery [skip ci]"
 
           for attempt in 1 2 3; do

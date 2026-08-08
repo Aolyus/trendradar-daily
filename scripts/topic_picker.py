@@ -234,6 +234,7 @@ def build_slot_prompt(
 
 01｜选题标题
 推荐：9/10
+验证词：2个中文核心词｜2个英文核心词（仅供系统检索，不要写完整句子）
 新增事实：与早报相比新在哪里
 切入角度：从哪个反常识或趋势点讲
 开头钩子：3 秒开场白
@@ -262,6 +263,7 @@ def build_slot_prompt(
 
 01｜选题标题
 推荐：9/10
+验证词：2个中文核心词｜2个英文核心词（仅供系统检索，不要写完整句子）
 一句话判断：为什么值得拍
 切入角度：从哪个反常识或趋势点讲
 开头钩子：3 秒开场白
@@ -307,6 +309,11 @@ def clean_for_feishu_text(text: str) -> str:
 
 def has_strong_topic(text: str) -> bool:
     return text.strip().upper() != NO_STRONG_TOPIC
+
+
+def strip_validation_terms(text: str) -> str:
+    text = re.sub(r"^\s*验证词\s*[：:].*$\n?", "", text, flags=re.MULTILINE)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def chat_completion(messages: list[dict[str, str]]) -> str:
@@ -396,6 +403,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--trendradar-dir", default="TrendRadar", help="TrendRadar checkout directory")
     parser.add_argument("--slot", choices=("morning", "afternoon"), default="morning")
+    parser.add_argument(
+        "--social-cache",
+        default="state/social-validation-cache.json",
+        help="Persistent public-index validation cache",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print collected input without calling AI or Feishu")
     args = parser.parse_args()
 
@@ -427,13 +439,30 @@ def main() -> int:
         log("No strong incremental afternoon topic; Feishu topic message skipped")
         return 0
 
+    validation = ""
+    try:
+        from social_validation import validate_analysis
+
+        validation = validate_analysis(
+            analysis,
+            args.slot,
+            os.environ.get("BRAVE_SEARCH_API_KEY", "").strip(),
+            Path(args.social_cache),
+            logger=log,
+        )
+    except Exception as exc:
+        log(f"Platform validation failed safely; original topic radar will continue: {exc}")
+
+    analysis = strip_validation_terms(analysis)
+
     title = "下午 AI 视频选题补充" if args.slot == "afternoon" else "今日 AI 视频选题雷达"
     source_note = (
         "TrendRadar 下午新增资讯 + DeepSeek 增量选题分析"
         if args.slot == "afternoon"
         else "TrendRadar 今日资讯 + DeepSeek 二次选题分析"
     )
-    final_text = f"{title}｜{today}\n\n{analysis}\n\n来源：{source_note}"
+    validation_text = f"\n\n{validation}" if validation else ""
+    final_text = f"{title}｜{today}\n\n{analysis}{validation_text}\n\n来源：{source_note}"
     send_feishu(final_text)
     return 0
 

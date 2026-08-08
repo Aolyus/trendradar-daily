@@ -32,6 +32,12 @@ class TopicPickerTests(unittest.TestCase):
         messages = topic_picker.build_slot_prompt([], [], "morning")
         self.assertIn("3-5 个最值得拍成短视频的选题", messages[-1]["content"])
 
+    def test_hidden_validation_terms_are_removed_from_feishu_text(self):
+        text = "01｜选题\n验证词：中文词｜English terms\n推荐：9/10"
+        cleaned = topic_picker.strip_validation_terms(text)
+        self.assertNotIn("验证词", cleaned)
+        self.assertIn("推荐：9/10", cleaned)
+
 
 if __name__ == "__main__":
     unittest.main()
