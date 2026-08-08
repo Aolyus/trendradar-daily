@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 BEIJING = dt.timezone(dt.timedelta(hours=8))
 BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
+ZHIPU_ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/web_search"
 DEFAULT_CACHE_TTL_HOURS = 4
 MAX_RESULTS_PER_PLATFORM = 8
 
@@ -161,6 +162,8 @@ def topic_similarity(topic: dict[str, Any], candidate: str) -> float:
 
 
 class BraveSearcher:
+    cache_namespace = "brave"
+
     def __init__(self, api_key: str, timeout: int = 20):
         self.api_key = api_key
         self.timeout = timeout
@@ -199,12 +202,71 @@ class BraveSearcher:
         raise RuntimeError("Brave Search request failed") from last_error
 
 
+class ZhipuSearcher:
+    cache_namespace = "zhipu-search-std"
+
+    def __init__(self, api_key: str, timeout: int = 20):
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def search(self, query: str) -> dict[str, Any]:
+        domain_match = re.match(r"^site:([^\s]+)\s*(.*)$", query)
+        domain = domain_match.group(1) if domain_match else ""
+        search_query = domain_match.group(2).strip() if domain_match else query
+        payload: dict[str, Any] = {
+            "search_query": search_query,
+            "search_engine": "search_std",
+            "search_intent": False,
+            "count": MAX_RESULTS_PER_PLATFORM,
+            "search_recency_filter": "oneWeek",
+            "content_size": "medium",
+        }
+        if domain:
+            payload["search_domain_filter"] = domain
+
+        request = urllib.request.Request(
+            ZHIPU_ENDPOINT,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    response_payload = json.loads(response.read().decode("utf-8"))
+                results = response_payload.get("search_result", [])
+                return {
+                    "results": [normalize_zhipu_result(item) for item in results],
+                    "more_results": len(results) >= MAX_RESULTS_PER_PLATFORM,
+                }
+            except (OSError, ValueError, urllib.error.HTTPError) as exc:
+                last_error = exc
+                if attempt == 0:
+                    time.sleep(1)
+        raise RuntimeError("Zhipu Web Search request failed") from last_error
+
+
 def normalize_result(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "title": str(item.get("title", "")).strip(),
         "url": str(item.get("url", "")).strip(),
         "snippet": str(item.get("description", "")).strip(),
         "published_at": item.get("page_age") or item.get("age"),
+        "source_access": "indexed_only",
+    }
+
+
+def normalize_zhipu_result(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": str(item.get("title", "")).strip(),
+        "url": str(item.get("link", "")).strip(),
+        "snippet": str(item.get("content", "")).strip(),
+        "published_at": item.get("publish_date"),
         "source_access": "indexed_only",
     }
 
@@ -243,7 +305,8 @@ def cached_search(
     now: dt.datetime,
     ttl_hours: int,
 ) -> dict[str, Any]:
-    key = cache_key(query)
+    namespace = str(getattr(searcher, "cache_namespace", searcher.__class__.__name__))
+    key = cache_key(f"{namespace}\n{query}")
     entry = cache["queries"].get(key)
     if entry:
         try:
@@ -393,9 +456,10 @@ def validate_analysis(
     now: dt.datetime | None = None,
     ttl_hours: int = DEFAULT_CACHE_TTL_HOURS,
     logger: Callable[[str], None] = print,
+    provider: str = "brave",
 ) -> str:
     if not api_key and searcher is None:
-        logger("BRAVE_SEARCH_API_KEY is not configured; platform validation skipped")
+        logger("Search API key is not configured; platform validation skipped")
         return ""
 
     topic_limit = 2 if slot == "morning" else 1
@@ -406,7 +470,14 @@ def validate_analysis(
 
     current = now or dt.datetime.now(BEIJING)
     cache = load_cache(cache_path)
-    active_searcher = searcher or BraveSearcher(api_key)
+    if searcher is not None:
+        active_searcher = searcher
+    elif provider == "zhipu":
+        active_searcher = ZhipuSearcher(api_key)
+    elif provider == "brave":
+        active_searcher = BraveSearcher(api_key)
+    else:
+        raise ValueError(f"Unsupported search provider: {provider}")
     validated: list[dict[str, Any]] = []
     for topic in topics:
         result = validate_topic(topic, active_searcher, cache, current, ttl_hours, logger)

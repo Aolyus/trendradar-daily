@@ -443,12 +443,16 @@ def main() -> int:
     try:
         from social_validation import validate_analysis
 
+        zhipu_key = os.environ.get("ZHIPU_SEARCH_API_KEY", "").strip()
+        brave_key = os.environ.get("BRAVE_SEARCH_API_KEY", "").strip()
+        search_provider = "zhipu" if zhipu_key else "brave"
         validation = validate_analysis(
             analysis,
             args.slot,
-            os.environ.get("BRAVE_SEARCH_API_KEY", "").strip(),
+            zhipu_key or brave_key,
             Path(args.social_cache),
             logger=log,
+            provider=search_provider,
         )
     except Exception as exc:
         log(f"Platform validation failed safely; original topic radar will continue: {exc}")
