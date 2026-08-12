@@ -72,6 +72,14 @@
       "run_id": "31472586660",
       "run_url": "https://github.com/Aolyus/trendradar-daily/actions/runs/31472586660",
       "success_at": "2026-08-11T16:19:15.589666+08:00"
+    },
+    "2026-08-12:morning": {
+      "status": "success",
+      "slot": "morning",
+      "source": "watchdog",
+      "run_id": "31559644480",
+      "run_url": "https://github.com/Aolyus/trendradar-daily/actions/runs/31559644480",
+      "success_at": "2026-08-12T11:19:20.053433+08:00"
     }
   }
 }
