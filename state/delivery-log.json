@@ -1,22 +1,6 @@
 {
   "version": 1,
   "deliveries": {
-    "2026-08-19:morning": {
-      "status": "success",
-      "slot": "morning",
-      "source": "watchdog",
-      "run_id": "32211628271",
-      "run_url": "https://github.com/Aolyus/trendradar-daily/actions/runs/32211628271",
-      "success_at": "2026-08-19T11:19:27.224514+08:00"
-    },
-    "2026-08-19:afternoon": {
-      "status": "success",
-      "slot": "afternoon",
-      "source": "github-schedule",
-      "run_id": "32231034316",
-      "run_url": "https://github.com/Aolyus/trendradar-daily/actions/runs/32231034316",
-      "success_at": "2026-08-19T16:08:18.463071+08:00"
-    },
     "2026-08-20:morning": {
       "status": "success",
       "slot": "morning",
@@ -736,6 +720,14 @@
       "run_id": "37109185516",
       "run_url": "https://github.com/Aolyus/trendradar-daily/actions/runs/37109185516",
       "success_at": "2026-10-03T16:18:08.449404+08:00"
+    },
+    "2026-10-04:morning": {
+      "status": "success",
+      "slot": "morning",
+      "source": "watchdog",
+      "run_id": "37173629154",
+      "run_url": "https://github.com/Aolyus/trendradar-daily/actions/runs/37173629154",
+      "success_at": "2026-10-04T11:18:11.481987+08:00"
     }
   }
 }
