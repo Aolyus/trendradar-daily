@@ -709,9 +709,9 @@
       "status": "success",
       "slot": "morning",
       "source": "manual",
-      "run_id": "45185808577",
-      "run_url": "https://github.com/Aolyus/trendradar-daily/actions/runs/45185808577",
-      "success_at": "2026-11-23T21:38:21.962911+08:00"
+      "run_id": "45186254822",
+      "run_url": "https://github.com/Aolyus/trendradar-daily/actions/runs/45186254822",
+      "success_at": "2026-11-23T21:41:25.932346+08:00"
     },
     "2026-11-23:afternoon": {
       "status": "success",
