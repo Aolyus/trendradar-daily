@@ -44,8 +44,9 @@ def log(message: str) -> None:
 def find_latest_db(directory: Path) -> Path | None:
     if not directory.exists():
         return None
-    dbs = sorted(directory.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return dbs[0] if dbs else None
+    today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%Y-%m-%d")
+    db_path = directory / f"{today}.db"
+    return db_path if db_path.exists() else None
 
 
 def table_exists(conn: sqlite3.Connection, table: str) -> bool:

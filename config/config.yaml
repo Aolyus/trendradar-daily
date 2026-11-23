@@ -2,7 +2,8 @@ app:
   timezone: "Asia/Shanghai"
 
 platforms:
-  enabled: false
+  # This upstream flag enables the entire crawler, including RSS.
+  enabled: true
   api_url: ""
   sources: []
 

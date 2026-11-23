@@ -4,6 +4,8 @@
 
 原始 RSS：https://aihot.news/feed.xml
 
+上游 `platforms.enabled` 实际控制包括 RSS 在内的整个采集流程，必须为 true。旧热榜通过 `platforms.sources: []` 停用。视频选题只读取北京时间当天的数据库，防止误用上游仓库附带的历史样例。真实资讯未送达时，包装器会报错，阻止写入推送成功记录。
+
 ## 余额不足
 
 飞书出现 `Insufficient Balance` 表示模型服务余额不足。DeepSeek 官方说明：https://api-docs.deepseek.com/quick_start/error_codes/

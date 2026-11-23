@@ -1,5 +1,7 @@
 import importlib.util
 import unittest
+import datetime as dt
+import tempfile
 from pathlib import Path
 
 
@@ -11,6 +13,16 @@ SPEC.loader.exec_module(topic_picker)
 
 
 class TopicPickerTests(unittest.TestCase):
+    def test_old_sample_database_is_never_used_as_today_news(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "2025-12-27.db").touch()
+            self.assertIsNone(topic_picker.find_latest_db(path))
+            today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%Y-%m-%d")
+            current = path / f"{today}.db"
+            current.touch()
+            self.assertEqual(topic_picker.find_latest_db(path), current)
+
     def test_afternoon_prompt_limits_topics_and_allows_silence(self):
         messages = topic_picker.build_slot_prompt(
             [{"title": "New model", "source": "Official", "url": "https://example.com"}],

@@ -22,6 +22,7 @@ def main() -> int:
     config = load_config()
     config["DEBUG"] = True
     install_analysis_guard(AIAnalyzer, Path("output/ai-status.json"))
+    delivery_confirmed = False
 
     if args.dry_run:
         config["ENABLE_NOTIFICATION"] = False
@@ -29,15 +30,19 @@ def main() -> int:
         original_dispatch = NotificationDispatcher.dispatch_all
 
         def strict_dispatch(self, *dispatch_args, **dispatch_kwargs):
+            nonlocal delivery_confirmed
             results = original_dispatch(self, *dispatch_args, **dispatch_kwargs)
             if not results.get("feishu", False):
                 raise RuntimeError(f"Feishu delivery was not confirmed: {results}")
+            delivery_confirmed = True
             return results
 
         NotificationDispatcher.dispatch_all = strict_dispatch
 
     analyzer = NewsAnalyzer(config=config)
     analyzer.run()
+    if not args.dry_run and not delivery_confirmed:
+        raise RuntimeError("No Feishu news delivery occurred; refusing to record success")
     return 0
 
 
