@@ -124,9 +124,21 @@ def read_rss_items(db_path: Path | None, limit: int = MAX_RSS_ITEMS) -> list[dic
             f"select {', '.join(select_parts)} from rss_items{join}{order} limit ?",
             (limit,),
         ).fetchall()
-        return [dict(row) for row in rows if row["title"]]
+        return [dict(row) for row in rows if row["title"] and recent_rss_date(row["published_at"])]
     finally:
         conn.close()
+
+
+def recent_rss_date(value: str, now: dt.datetime | None = None) -> bool:
+    try:
+        published = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if published.tzinfo is None:
+            # TrendRadar's RSS parser stores feed timestamps as naive UTC.
+            published = published.replace(tzinfo=dt.timezone.utc)
+        current = now or dt.datetime.now(dt.timezone.utc)
+        return current - dt.timedelta(days=2) <= published <= current
+    except (ValueError, TypeError):
+        return False
 
 
 def compact_items(items: list[dict[str, Any]], item_type: str) -> str:

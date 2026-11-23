@@ -13,6 +13,13 @@ SPEC.loader.exec_module(topic_picker)
 
 
 class TopicPickerTests(unittest.TestCase):
+    def test_rss_topics_use_recent_timestamped_news_only(self):
+        now = dt.datetime(2026, 11, 23, 13, tzinfo=dt.timezone.utc)
+        self.assertTrue(topic_picker.recent_rss_date("2026-11-23T09:00:00", now))
+        self.assertFalse(topic_picker.recent_rss_date("2026-11-19T09:00:00", now))
+        self.assertFalse(topic_picker.recent_rss_date("", now))
+        self.assertFalse(topic_picker.recent_rss_date("2026-11-24T09:00:00", now))
+
     def test_old_sample_database_is_never_used_as_today_news(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
