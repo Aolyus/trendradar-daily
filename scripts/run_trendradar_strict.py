@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+
+from ai_status import install_analysis_guard
 
 from trendradar.__main__ import NewsAnalyzer
+from trendradar.ai import AIAnalyzer
 from trendradar.core import load_config
 from trendradar.notification.dispatcher import NotificationDispatcher
 
@@ -17,6 +21,7 @@ def main() -> int:
 
     config = load_config()
     config["DEBUG"] = True
+    install_analysis_guard(AIAnalyzer, Path("output/ai-status.json"))
 
     if args.dry_run:
         config["ENABLE_NOTIFICATION"] = False

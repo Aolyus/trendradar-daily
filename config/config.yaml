@@ -30,6 +30,10 @@ rss:
     enabled: true
     max_age_days: 2
   feeds:
+    - id: "aihot-selected"
+      name: "AIHOT 精选"
+      url: "https://aihot.news/feed.xml?aihot_actor=ba253f7f-494d-4d89-a7ba-4ae5c4ce9313"
+
     - id: "openai-news"
       name: "OpenAI News"
       url: "https://openrss.org/openai.com/news/rss.xml"

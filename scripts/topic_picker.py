@@ -432,6 +432,11 @@ def main() -> int:
         print(messages[-1]["content"])
         return 0
 
+    from ai_status import topics_blocked
+
+    if topics_blocked(output_dir / "ai-status.json"):
+        return 0
+
     analysis = chat_completion(messages)
     today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%Y-%m-%d")
     analysis = clean_for_feishu_text(analysis)
